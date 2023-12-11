@@ -148,10 +148,10 @@ else
         sudo iptables -A FORWARD -o "$ETH0" -i "$BRIDGE" -j ACCEPT
         sudo iptables -A FORWARD -i "$ETH0" -o "$BRIDGE" -j ACCEPT
 
-        # This tells the kernel not to chuck away a packet that's not destined
-        # for an interface and instead to send it on.  This makes sense to be
-        # disabled for an individual workstation, but we now need to turn this
-        # into a router.
+        # This tells the kernel not to chuck away a packet that's not destined for an
+        # interface and instead to send it on.  It makes sense to disable it for an
+        # individual workstation (because it usually doesn't need to perform the functions
+        # of a router, but we now do need to turn this into a router.
         echo 1 | sudo tee /proc/sys/net/ipv4/ip_forward > /dev/null
     fi
 
