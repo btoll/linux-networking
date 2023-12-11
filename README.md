@@ -1,5 +1,7 @@
 # linux-networking
 
+There is a scintillating article that accompanies this repository, [On Linux Container Networking](/2023/11/28/on-linux-container-networking/).  Check it out.
+
 Note that no `iptables` rules are needed if not communicating with any other networks.  Pinging all `veth` interfaces attached to bridge `br0` and the main `eth0` interface will all work.
 
 ## Saving and restoring the firewall rules (iptables)
@@ -90,6 +92,7 @@ Pick your poison.
 
 ## References
 
+- [On Linux Container Networking](/2023/11/28/on-linux-container-networking/)
 - [Container Networking From Scratch](https://www.youtube.com/watch?v=6v_BDHIgOY8)
 - [How Container Networking Works](https://iximiuz.com/en/posts/container-networking-is-simple/)
 - [Network namespaces to the Internet with veth and NAT](https://josephmuia.ca/2018-05-16-net-namespaces-veth-nat/)
