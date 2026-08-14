@@ -103,6 +103,8 @@ then
     fi
 
     NETMASK="${NETWORK#*/}"
+    # Because we're using `ipcalc`, this conditional should never be true since a valid CIDR address
+    # should always have a network prefix.  Doesn't hurt to keep it.
     if [ -z "$NETMASK" ]
     then
         printf "%b CIDR address does not contain a network prefix.\n" "$ERROR"
@@ -128,7 +130,6 @@ then
 
         # Attach the other end to the bridge device.
         ip -netns "$NAMESPACE" link set dev "veth$i" master "$BRIDGE"
-
 
         ip -netns "${NAMESPACE}$i" address add "$BASE_IP.$((LAST_OCTET + 10 + i))/$NETMASK" dev "ceth$i"
         ip -netns "${NAMESPACE}$i" link set "ceth$i" up
