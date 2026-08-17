@@ -2,32 +2,30 @@
 
 There is a scintillating article that accompanies this repository, [On Linux Container Networking].  Check it out.
 
-Note that no `iptables` rules are needed if not communicating with any other networks.  Pinging all `veth` interfaces attached to bridge `br0` and the main `eth0` interface will all work.
+## Bridge
 
-## Saving and restoring the firewall rules (iptables)
+The `bridge.sh` script will create new `net` namespaces and then enable communication between the `net` namespaces using a layer 2 bridge that created in the root `net` namespace.
 
-```bash
-$ sudo iptables-save > /tmp/iptables.backup
-```
+- The new bridge virtual device will have an IP address in the network of the default network stack.
+- A `veth` pair will be created for each host (`--host`).  One half of the pair will be moved to the new `net` namespace and given an IP address in the CIDR range (`--cidr`), and the other half will remain in the root namespace.  The `veth` in the root namespace will **not** be given an IP address, instead it will be add to the new virtual bridge (this can be visualized as plugging its half of the cable into a layer 2 network switch).
+- All Internet traffic is `NAT`ed using `iptables MASQUERADE`.
+- The script will generate routes that facilitate all traffic:
+    + "Container" to "container" (between new `net` namespaces).
+    + "Container" to Internet.
+    + Host to subnet.
 
-Sometime later...
-
-```bash
-$ sudo iptables-restore < /tmp/iptables.backup
-```
-
-## Examples
+### Examples
 
 Create three networked containers:
 
 ```bash
-$ ./veth_network.sh -n 3 --ns foo --cidr 172.18.0.0/12
+$ ./bridge.sh --hosts 3 --ns foo --cidr 172.18.0.0/12
 ```
 
 Delete the three containers:
 
 ```bash
-$ ./veth_network.sh -d -n 3 --ns foo
+$ ./bridge.sh --destroy --hosts 3 --ns foo
 ```
 
 Show all veth devices attached to a bridge:
@@ -39,7 +37,7 @@ $ ip link show master br0
 Run a command in one of the new network namespaces:
 
 ```bash
-$ sudo nsenter --net=/var/run/netns/netns3 ip address
+$ sudo ip -n netns3 address
 1: lo: <LOOPBACK,UP,LOWER_UP> mtu 65536 qdisc noqueue state UNKNOWN group default qlen 1000
     link/loopback 00:00:00:00:00:00 brd 00:00:00:00:00:00
     inet 127.0.0.1/8 scope host lo
@@ -74,12 +72,8 @@ $ sudo ip netns exec netns3 ip address
 
 Pick your poison.
 
-> To get a shell inside the net namespace:
+> To get a shell inside the `netns3` net namespace:
 >
-> ```bash
-> $ sudo nsenter --net=/var/run/netns/netns3 bash
-> ```
-> Or:
 > ```bash
 > $ sudo ip netns exec netns3 bash
 > ```
@@ -89,6 +83,29 @@ Pick your poison.
 #sudo mkdir -p /etc/netns/"$NET_NS"
 #sudo touch /etc/netns/"$NET_NS"/resolv.conf
 -->
+
+## Subnetting
+
+The `subnetting.sh` script will create new `net` namespaces and then enable communication between the `net` namespaces and the default network stack (in the root namespace) by giving both ends of the `veth` pair IP addresses.
+
+- Each host (`--host`) will be given a subnet with a /24 mask.  The `veth` interface in the new `net` namespace will be given an addressable IP address in the subnet, and the `veth` interface in the root namespace will be given the routing IP address of the subnet, i.e. the gateway (for example, 172.16.2.1).
+- All Internet traffic is `NAT`ed using `iptables MASQUERADE`.
+- The script will generate routes that facilitate all traffic:
+    + Subnet to subnet (between new `net` namespaces).
+    + Subnet to Internet.
+    + Host to subnet.
+
+## Saving and restoring the firewall rules (iptables)
+
+```bash
+$ sudo iptables-save > /tmp/iptables.backup
+```
+
+Sometime later...
+
+```bash
+$ sudo iptables-restore < /tmp/iptables.backup
+```
 
 ## References
 
