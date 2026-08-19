@@ -95,6 +95,129 @@ The `subnetting.sh` script will create new `net` namespaces and then enable comm
     + Subnet to Internet.
     + Host to subnet.
 
+## Service Discovery
+
+Using the `subnetting.sh` script to set up a network, let's implement basic service discovery using [`dnsmasq`].
+
+Here is the basic idea:
+
+- Run `dnsmasq` in one of the `net` namespaces.
+- Execute a simple `bash` script that will do the following:
+    + Accept a `net` namespace name as the sole argument.
+    + Using the namespace name, lookup the IP address bound to the `veth` that was moved into the namespace.
+    + Register it by writing a ".host" file to `/etc/dnsmasq.d/`.  `dnsmasq` will automatically notice it and create an A record.
+    + Run the `hello` Go webserver (listening on port :8080).
+    + When the script is killed, deregister the service by removing the host file that was added to `/etc/dnsmasq.d/`.  Again, `dnsmasq` will automatically notice the change and remove the A record.
+
+Here is `/etc/dnsmasq.conf`:
+
+```conf
+hostsdir=/etc/dnsmasq.d/ # inotify watches the dir
+
+no-resolv
+
+server=1.1.1.1
+server=8.8.8.8
+
+listen-address=127.0.0.1
+
+bind-interfaces
+interface=ceth1
+
+# Local domain configuration
+local-service
+local=/service.local/
+expand-hosts
+
+# This creates an A record for dnsmasq.  Put all others in /etc/dnsmasq.d/.
+interface-name=dnsmasq.service.local,ceth1
+
+# Create an SRV record for dnsmasq.  I don't think that others can be
+# dynamically added.
+# dig @172.16.2.2 +short SRV _dns._udp.dnsmasq.service.local
+srv-host=_dns._udp.service.local,dnsmasq.service.local,53,10,50
+
+```
+
+Here is `hello.sh`:
+
+```bash
+#!/bin/bash
+
+ERROR="\e[31m[ERROR]\e[0m"
+
+if [ $EUID -ne 0 ]; then
+    printf "%b This script must be run as root!\n" "$ERROR" 1>&2
+    exit 1
+fi
+
+if [ "$#" != 1 ]
+then
+    printf "%b This script expects only one argument, the name of the net namespace.\n" "$ERROR" 1>&2
+    exit 1
+fi
+
+NS="$1"
+
+register() {
+    INDEX="${NS: -1}"
+    IP=$(ip netns exec "$NS" ip addr show "ceth$INDEX" | grep -oP '(?<=inet\s)\d+\.\d+\.\d+\.\d+')
+    echo "$IP hello.local" > /etc/dnsmasq.d/hello.host
+}
+
+deregister() {
+    rm /etc/dnsmasq.d/hello.host
+}
+
+trap deregister EXIT
+
+register
+ip netns exec "$NS" ./hello
+
+```
+
+Finally, the Go program:
+
+```go
+package main
+
+import (
+	"io"
+	"log"
+	"net/http"
+)
+
+func hello(w http.ResponseWriter, r *http.Request) {
+	io.WriteString(w, "Hello!\n")
+}
+
+func main() {
+	http.HandleFunc("/", hello)
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+```
+
+Create the network:
+
+```bash
+sudo bash subnetting.sh --hosts 3 --ns foo
+```
+
+The best way to see the example in action is to open four terminals (of course you're using a terminal multiplexer like `tmux`):
+
+1. Run `ip netns exec foo1 dnsmasq -d --log-queries`.
+1. Watch `/etc/dnsmasq.d/` to see the service registered and deregistered: `watch -n1 ls /etc/dnsmasq.d`.
+1. Run `sudo bash hello.sh foo3`.
+1. `curl` the web server:
+    ```bash
+    $ dig @172.16.1.2 A +short hello.local
+    172.16.3.2
+    $ curl http://172.16.3.2:8080
+    Hello!
+    ```
+
+That's it.
+
 ## Saving and restoring the firewall rules (iptables)
 
 ```bash
@@ -124,4 +247,5 @@ $ sudo iptables-restore < /tmp/iptables.backup
 Benjamin Toll
 
 [On Linux Container Networking]: https://benjamintoll.com/2026/08/12/on-linux-container-networking/
+[`dnsmasq`]: https://dnsmasq.org/doc.html
 
