@@ -2,6 +2,12 @@
 
 # TODO: Ensure the range is large enough to accompany N hosts at every X IP address.
 
+# This is called hidden_bridge because everything created in this script
+# is not accessible from the root namespace.
+# The virtual bridge is created in the net namespace passed in as --ns,
+# so to see that and the other net namespaces that are "plugged" into it
+# one must `ip netns exec foo bash`.
+
 set -eo pipefail
 
 LANG=C
