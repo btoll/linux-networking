@@ -5,8 +5,23 @@
 # so to see that and the other net namespaces that are "plugged" into it
 # one must `ip netns exec foo bash`.
 
+# container namespaces                 container namespaces
+# 10.0.0.10, 10.0.0.11                 10.0.0.12, 10.0.0.13
+#        |                                      |
+#      veth                                  veth
+#        |                                      |
+#    host0/br0                           host1/br0
+#        |                                      |
+#    vxlan100  =======================  vxlan100
+#        |          UDP/4789                 |
+#  host0 underlay                       host1 underlay
+#  172.16.0.1                           172.16.0.2
+#        \                                      /
+#         \                                    /
+#               root namespace bridge
+
 # root ns
-# - root-br0 bridge virtual interface (underlay IP 172.16.0.1/16)
+# - root-br0 bridge virtual interface (no IP)
 # - root-veth0 plugged into root-br0 (no IP)
 # - root-veth1 plugged into root-br0 (no IP)
 #
@@ -58,15 +73,12 @@ create_host() {
     local first_three_octets="${HOST_BRIDGE_IP%.*}"
     local last_octet="${HOST_BRIDGE_IP##*.}"
 
-#    local host_bridge_ip="$first_three_octets.$((last_octet + index + 1))" # The root ns bridge is .1.
-
     # Create the host (i.e., the new net namespace which will include
     # the bridge and the veth pair.
     ip netns add "$hostns"
 
     # Each host gets its own bridge.
     ip -netns "$hostns" link add name "$BRIDGE" type bridge
-#    ip -netns "$hostns" address add "$host_bridge_ip/$HOST_NETMASK" dev "$BRIDGE"
     ip -netns "$hostns" link set "$BRIDGE" up
 
     # Yes, we're going to reuse these local vars.
@@ -96,9 +108,6 @@ create_host() {
         ip -netns "$containerns" address add "$first_three_octets.$((last_octet + CONTAINER_COUNTER))/$CONTAINER_NETMASK" dev "ceth$n"
         ip -netns "$containerns" link set "ceth$n" up
 
-        # Add route to the host bridge.
-#        ip -netns "$containerns" route add default via "$host_bridge_ip"
-#
         CONTAINER_COUNTER=$((CONTAINER_COUNTER + 1))
     done
 }
@@ -116,7 +125,7 @@ create_root_bridge() {
         ip link add "host-veth$i" type veth peer name "host-ceth$i"
         # Move one end into host ns, add IP address and bring it up.
         ip link set "host-ceth$i" netns "host$i"
-        ip -n "host$i" address add "$first_three_octets.$((last_octet + i + 1))/$HOST_NETMASK" dev "host-ceth$i"
+        ip -n "host$i" address add "$first_three_octets.$((last_octet + i))/$HOST_NETMASK" dev "host-ceth$i"
         ip -n "host$i" link set "host-ceth$i" up
         # Add other end to host bridge and bring it up.
         ip link set dev "host-veth$i" master "host$BRIDGE"
@@ -132,23 +141,25 @@ setup_vxlan_vteps() {
 
     ip -netns host0 link add "$vtep" type vxlan \
         id "$vni" \
-        local 172.16.0.2 \
-        remote 172.16.0.3 \
+        local 172.16.0.1 \
+        remote 172.16.0.2 \
         dev host-ceth0 \
         dstport 4789
 
     ip -netns host0 link set dev "$vtep" master br0
     ip -netns host0 link set "$vtep" up
+    ip -netns host0 link set "$vtep" mtu 1450
 
     ip -netns host1 link add "$vtep" type vxlan \
         id "$vni" \
-        local 172.16.0.3 \
-        remote 172.16.0.2 \
+        local 172.16.0.2 \
+        remote 172.16.0.1 \
         dev host-ceth1 \
         dstport 4789
 
     ip -netns host1 link set dev "$vtep" master br0
     ip -netns host1 link set "$vtep" up
+    ip -netns host1 link set "$vtep" mtu 1450
 }
 
 if ! command -v ipcalc > /dev/null
@@ -195,11 +206,6 @@ done
 
 if [ -n "$DESTROY" ]
 then
-    # Only remove the module and turn off ip forwarding if you KNOW
-    # that nothing else on the system is depending on it!
-    modprobe --remove br_netfilter
-    echo 0 | tee /proc/sys/net/ipv4/ip_forward > /dev/null
-
     cleanup
 else
     # 172.18.0.0/20 - 4096 addresses
@@ -251,11 +257,6 @@ else
         printf "%b host CIDR address does not contain a network prefix.\n" "$ERROR"
         usage 1
     fi
-
-    modprobe br_netfilter
-    # Enabling packet forwarding turns the machine into a router, with the
-    # bridge interface acting as the default gateway for the containers.
-    echo 1 | tee /proc/sys/net/ipv4/ip_forward > /dev/null
 
     for ((i=0; i < HOSTS; i++))
     do
