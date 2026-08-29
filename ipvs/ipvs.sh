@@ -7,6 +7,12 @@ if [ $EUID -ne 0 ]; then
     exit 1
 fi
 
+if ! command -v ipvsadm > /dev/null
+then
+    printf "%b \`ipvsadm\` not found within PATH.\n" "$ERROR"
+    exit 1
+fi
+
 if [ "$#" != 1 ]
 then
     printf "%b This script expects only one argument, the name of the net namespace.\n" "$ERROR" 1>&2
