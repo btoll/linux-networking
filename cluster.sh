@@ -19,16 +19,21 @@ trap cleanup ERR
 
 cleanup() {
     local ns
+
     for ns in $(ip netns list | awk '/node[0-9]+(-pod[0-9]+)?/ {print $1}')
     do
         ip netns delete "$ns"
     done
+
     ip link delete "host-$BRIDGE" type bridge
+
+
     # The sandbox-init process anchors will be re-parented to PID 1 in the host network namespace.
     for pid in $(pidof sandbox-init)
     do
         kill -SIGKILL "$pid"
     done
+
     iptables -t nat -D POSTROUTING -o enp2s0 -j MASQUERADE 2> /dev/null
 }
 
@@ -142,6 +147,8 @@ create_node() {
     # Bring up loopback (optional).
     ip -netns "$nodens" link set lo up
 
+    systemctl set-property "$nodens.slice" MemoryMax=2G
+
     for ((n=0; n < PODS; n++))
     do
         # Create the veth pair.
@@ -164,11 +171,16 @@ create_node() {
         # Bring up loopback (optional).
         ip -netns "$podns" link set lo up
 
+        systemctl set-property "$podns.slice" MemoryMax=1G
+
         # Add the container anchor.  This is the supervisor that will reap all re-parented children and trap signals.
         # Maybe put behind a CLI flag.
-        if [ -f sandbox-init ] && [ -x sandbox-init ]
+        if [ -f "$INIT_EXEC" ] && [ -x "$INIT_EXEC" ]
         then
-            ip netns exec "$podns" unshare --fork --pid --mount-proc --uts -- ./sandbox-init &
+            systemd-run --no-block --slice="$podns.slice" \
+                --unit="${nodens}_pod$n.service" \
+                --property="MemoryMax=1G" \
+                ip netns exec "$podns" unshare --fork --pid --mount-proc --uts -- "$INIT_EXEC"
         fi
 
         POD_COUNTER=$((POD_COUNTER + 1))
@@ -353,6 +365,7 @@ Options:
 --pods          The pods within each node (defaults to 2).
                 Each pod gets its own isolated net namespace.
 --destroy       Teardown.
+--init-exec     Location of the executable. It will be PID 1 in the pod and must be named \`sandbox-init\`.
 --internet      Flag to enable the cluster (all nodes and pods) access to the Internet.
 --node-cidr     The CIDR address for the nodes (defaults to 172.16.0.0/16).
 --nodes         Number of nodes in the cluster (defaults to 2).
@@ -366,6 +379,7 @@ Options:
 
 BRIDGE=br0
 DESTROY=
+INIT_EXEC=
 INTERNET=
 NODES=2
 NODE_CIDR=10.0.0.0/16
@@ -385,6 +399,7 @@ do
     OPT="$1"
     case $OPT in
         --destroy) DESTROY=1 ;;
+        --init-exec) shift; INIT_EXEC=$1 ;;
         --internet) INTERNET=1 ;;
         --node-cidr) shift; NODE_CIDR=$1 ;;
         --nodes) shift; NODES=$1 ;;
